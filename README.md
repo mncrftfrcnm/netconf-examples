@@ -5,14 +5,14 @@ Python scripts for configuring Cisco IOS-XE devices via NETCONF.
 ## Requirements
 
 ```
-pip install ncclient paramiko scp python-dotenv
+pip install ncclient paramiko scp python-dotenv jinja2
 ```
 
 ## Required Open Ports
 
 | Port | Protocol | Direction | Purpose |
 |------|----------|-----------|---------|
-| 22   | TCP      | Inbound (device) | SSH � used for SCP/SFTP file transfer |
+| 22   | TCP      | Inbound (device) | SSH � used for SCP/SFTP file transfer |
 | 830  | TCP      | Inbound (device) | NETCONF over SSH |
 
 Ensure your firewall/ACL allows the management host to reach the device on both ports.
@@ -97,7 +97,7 @@ Same as `send_cli_config.py` but with a manual commit/confirm safety flow:
    automatically and boots from `startup-config`
 4. Apply the config to `running-config`
 5. Prompt for confirmation within `NETCONF_CONFIRM_TIMEOUT` seconds
-   - **Confirmed** — cancel reload, clean up temp files
+   - **Confirmed** — cancel reload, save configuration (`write memory`), clean up temp files
    - **Timeout / No / Ctrl-C** — cancel reload, restore backup, clean up, exit 1
 
 ```bash
@@ -106,10 +106,51 @@ python send_cli_config_commit.py commands.txt
 
 Relevant env vars: `NETCONF_CONFIG_FILE`, `NETCONF_CONFIRM_TIMEOUT`
 
+---
+
+### `send_cli_config_commit_ssh.py`
+
+Same commit/confirm flow as `send_cli_config_commit.py` but **SSH only** — no NETCONF required.
+All file operations (`copy`, `delete`) are executed via SSH shell commands instead of NETCONF RPCs.
+Only port 22 needs to be open; port 830 is not used.
+
+1. Upload the file to `flash:` via SCP (falls back to SFTP)
+2. Back up `running-config` to `flash:` via SSH `copy`
+3. Schedule `reload in HH:MM` as a hardware-level safety net
+4. Apply the config to `running-config` via SSH `copy`
+5. Prompt for confirmation within `NETCONF_CONFIRM_TIMEOUT` seconds
+   - **Confirmed** — cancel reload, save configuration (`write memory`), clean up temp files
+   - **Timeout / No / Ctrl-C** — cancel reload, restore backup, clean up, exit 1
+
+```bash
+python send_cli_config_commit_ssh.py commands.txt
+```
+
+Relevant env vars: `NETCONF_CONFIG_FILE`, `NETCONF_CONFIRM_TIMEOUT`
+
 ## Commands file format
 
 See `commands.txt.example`. Plain IOS config lines, same as copy/paste
 into config mode. No YANG mapping required.
+
+The commands file can also be a **Jinja2 template**. All environment variables
+(including those from `.env`) are available as template variables:
+
+```
+interface GigabitEthernet1
+ description {{ UPLINK_DESC }}
+!
+interface GigabitEthernet2
+ description {{ LAN_DESC }}
+!
+```
+
+```bash
+UPLINK_DESC="Uplink to Core" LAN_DESC="LAN Access" python send_cli_config_commit_ssh.py commands_template.txt
+```
+
+The rendered file is uploaded; the original template is never sent to the device.
+Missing variables cause an error before any changes are made.
 
 ## Environment variables
 
